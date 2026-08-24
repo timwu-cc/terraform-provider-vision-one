@@ -30,6 +30,7 @@ const (
 	gcpCAMProjectMutationWaitTimeout  = 90 * time.Second
 	gcpProjectConnectedWaitInterval   = 10 * time.Second
 	gcpProjectConnectedWaitTimeout    = 5 * time.Minute
+	gcpProjectFailedState             = "failed"
 	gcpCloudPlatformScope             = "https://www.googleapis.com/auth/cloud-platform"
 
 	gcpKeyPropagationWaitTimeout  = 90 * time.Second
@@ -83,7 +84,7 @@ func isPrimaryFromKey(ctx context.Context, encodedKey, projectNumber string) (*b
 		return nil, fmt.Errorf("service account key missing project_id field")
 	}
 
-	cred, err := google.CredentialsFromJSON(ctx, keyJSON, gcpCloudPlatformScope)
+	cred, err := google.CredentialsFromJSONWithType(ctx, keyJSON, google.ServiceAccount, gcpCloudPlatformScope)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create credentials from service account key: %w", err)
 	}
@@ -325,7 +326,7 @@ func newClientOptionFromEncodedServiceAccountKey(ctx context.Context, encodedKey
 		return nil, err
 	}
 
-	creds, err := google.CredentialsFromJSON(ctx, keyJSON, gcpCloudPlatformScope)
+	creds, err := google.CredentialsFromJSONWithType(ctx, keyJSON, google.ServiceAccount, gcpCloudPlatformScope)
 	if err != nil {
 		return nil, fmt.Errorf("invalid service account key JSON: %w", err)
 	}
