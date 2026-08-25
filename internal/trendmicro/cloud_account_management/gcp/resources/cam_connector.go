@@ -30,6 +30,7 @@ var (
 	_ resource.Resource                     = &CAMConnectorResource{}
 	_ resource.ResourceWithConfigure        = &CAMConnectorResource{}
 	_ resource.ResourceWithConfigValidators = &CAMConnectorResource{}
+	_ resource.ResourceWithModifyPlan       = &CAMConnectorResource{}
 )
 
 // SecurityServiceModel represents a connected security service in Terraform state
@@ -357,6 +358,30 @@ func (v featuresConfigFilePathRequiresFeaturesValidator) ValidateResource(ctx co
 	}
 }
 
+func (r *CAMConnectorResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
+	// A null state is a create and a null plan is a destroy; neither needs this.
+	if req.State.Raw.IsNull() || req.Plan.Raw.IsNull() {
+		return
+	}
+
+	var state CAMConnectorResourceModel
+	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	if state.State.ValueString() != gcpProjectFailedState {
+		return
+	}
+
+	tflog.Debug(ctx, fmt.Sprintf(
+		"[CAM Connector GCP][ModifyPlan] Project %s is in a failed state, planning an update so its credentials are re-validated",
+		state.ProjectNumber.ValueString(),
+	))
+	resp.Diagnostics.Append(resp.Plan.SetAttribute(ctx, path.Root("state"), types.StringUnknown())...)
+	resp.Diagnostics.Append(resp.Plan.SetAttribute(ctx, path.Root("updated_date_time"), types.StringUnknown())...)
+}
+
 func (r *CAMConnectorResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
 	var plan CAMConnectorResourceModel
 
@@ -675,9 +700,22 @@ func (r *CAMConnectorResource) Update(ctx context.Context, req resource.UpdateRe
 		return
 	}
 
-	res, err := r.client.ReadProject(plan.ProjectNumber.ValueString())
+	var res *api.ProjectResponse
+	if state.State.ValueString() == gcpProjectFailedState {
+		res, err = waitForGCPProjectConnected(ctx, r.client, projectNumber, gcpProjectConnectedWaitTimeout, gcpProjectConnectedWaitInterval)
+	} else {
+		res, err = r.client.ReadProject(projectNumber)
+	}
 	if err != nil {
 		if addGCPNetworkRetryDiagnostic(&resp.Diagnostics, "Update", err) {
+			return
+		}
+		var notConnected *projectNotConnectedError
+		if errors.As(err, &notConnected) {
+			resp.Diagnostics.AddError(
+				"[CAM Connector GCP][Update] Project Not Connected",
+				fmt.Sprintf("[CAM Connector GCP][Update] %s", err),
+			)
 			return
 		}
 		resp.Diagnostics.AddError(
